@@ -3,7 +3,8 @@
 A modular C++20 starting point for Vulkan compute experiments, using GLFW,
 GLM, and Dear ImGui for optional visualization. It builds on the
 `vulkan_boilerplate` template and adds reusable compute resources rather than
-application-specific simulation code.
+application-specific simulation code. The stable compute baseline is tagged
+`v0.2.0`.
 
 ## What is included
 
@@ -72,8 +73,10 @@ vkexp::DescriptorSetWriter{}
     .writeBuffer(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, state.write().buffer())
     .update(device, descriptorSet);
 
-const vkexp::DispatchSize groups =
-    vkexp::dispatchSize({width, height, 1}, {8, 8, 1});
+const std::array<VkDeviceSize, 2> ranges{
+    state.read().size(), state.write().size()};
+const vkexp::DispatchSize groups = vkexp::checkedDispatchSize(
+    physicalDevice, {{width, height, 1}, {8, 8, 1}, sizeof(Settings), ranges});
 vkCmdDispatch(commands, groups.x, groups.y, groups.z);
 state.swap();
 ```
@@ -81,6 +84,9 @@ state.swap();
 `ImmediateContext` waits for each submitted transfer and is intended for
 initialization, tools, tests, and occasional readback. Per-frame streaming
 should use frame-owned staging allocations and asynchronous synchronization.
+`checkedDispatchSize` validates group counts, local workgroup dimensions and
+invocations, push-constant bytes, and storage-buffer descriptor ranges against
+the selected physical device before commands are recorded.
 
 ## Profiler
 

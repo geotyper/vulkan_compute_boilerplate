@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -17,8 +18,20 @@ struct DispatchSize {
     std::uint32_t z{1};
 };
 
+struct ComputeDispatchConfig {
+    VkExtent3D problemSize{};
+    VkExtent3D localSize{1, 1, 1};
+    std::uint32_t pushConstantBytes{};
+    std::span<const VkDeviceSize> storageBufferRanges{};
+};
+
 [[nodiscard]] std::uint32_t divideRoundUp(std::uint32_t value, std::uint32_t divisor);
 [[nodiscard]] DispatchSize dispatchSize(VkExtent3D problemSize, VkExtent3D localSize);
+void validateComputeLimits(const VkPhysicalDeviceLimits& limits, DispatchSize groups,
+                           VkExtent3D localSize, std::uint32_t pushConstantBytes = 0,
+                           std::span<const VkDeviceSize> storageBufferRanges = {});
+[[nodiscard]] DispatchSize checkedDispatchSize(VkPhysicalDevice physicalDevice,
+                                               const ComputeDispatchConfig& config);
 
 void cmdBufferBarrier(VkCommandBuffer commands, VkBuffer buffer, VkPipelineStageFlags2 sourceStage,
                       VkAccessFlags2 sourceAccess, VkPipelineStageFlags2 destinationStage,
@@ -102,7 +115,8 @@ private:
 
 class ComputePipelineBuilder {
 public:
-    explicit ComputePipelineBuilder(VkDevice device) : device_(device) {}
+    ComputePipelineBuilder(VkPhysicalDevice physicalDevice, VkDevice device)
+        : physicalDevice_(physicalDevice), device_(device) {}
 
     ComputePipelineBuilder& shader(std::string path, std::string entryPoint = "main");
     ComputePipelineBuilder& addDescriptorSetLayout(VkDescriptorSetLayout layout);
@@ -111,6 +125,7 @@ public:
     [[nodiscard]] ComputePipeline build() const;
 
 private:
+    VkPhysicalDevice physicalDevice_{};
     VkDevice device_{};
     std::string shaderPath_;
     std::string entryPoint_{"main"};

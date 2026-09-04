@@ -35,7 +35,7 @@ void ComputeModule::onAttach(AppContext& context) {
     descriptorAllocator_.create(
         device, DescriptorAllocatorConfig{1, {{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2}}});
     descriptorSet_ = descriptorAllocator_.allocate(descriptorSetLayout);
-    pipeline_ = ComputePipelineBuilder{device}
+    pipeline_ = ComputePipelineBuilder{context.vulkan.physicalDevice(), device}
                     .shader(VKEXP_SHADER_DIR "/experiment.comp.spv")
                     .addDescriptorSetLayout(descriptorSetLayout)
                     .addPushConstantRange(VK_SHADER_STAGE_COMPUTE_BIT, sizeof(int))
@@ -118,8 +118,9 @@ void ComputeModule::onRender(AppContext& context, const FrameInfo&) {
                             &descriptorSet_, 0, nullptr);
     vkCmdPushConstants(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(int),
                        &state_.blur.radius);
-    const DispatchSize groups =
-        dispatchSize({state_.blur.extent.width, state_.blur.extent.height, 1}, {8, 8, 1});
+    const DispatchSize groups = checkedDispatchSize(
+        context.vulkan.physicalDevice(),
+        {{state_.blur.extent.width, state_.blur.extent.height, 1}, {8, 8, 1}, sizeof(int)});
     vkCmdDispatch(commands, groups.x, groups.y, groups.z);
 
     cmdImageBarrier(commands, state_.viewport.image, VK_IMAGE_LAYOUT_GENERAL,

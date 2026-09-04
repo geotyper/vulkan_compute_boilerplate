@@ -66,6 +66,8 @@ the demo UI displays it without owning the renderer.
 - [x] Add a compute pipeline builder and descriptor allocator/writer.
 - [x] Add synchronization2 buffer/image barrier helpers.
 - [x] Add dispatch group calculation and buffer/image ping-pong resources.
+- [x] Validate dispatch, local workgroups, push constants, and storage buffer
+      ranges against physical-device limits.
 - [x] Add a headless Game of Life smoke test.
 - [x] Add automated unit and CLI smoke tests.
 - [ ] Add shader hot reload.

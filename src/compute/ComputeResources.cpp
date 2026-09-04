@@ -1,5 +1,6 @@
 #include "vkexp/compute/ComputeResources.hpp"
 
+#include <cstdint>
 #include <stdexcept>
 #include <utility>
 
@@ -21,6 +22,48 @@ DispatchSize dispatchSize(const VkExtent3D problemSize, const VkExtent3D localSi
         divideRoundUp(problemSize.height, localSize.height),
         divideRoundUp(problemSize.depth, localSize.depth),
     };
+}
+
+void validateComputeLimits(const VkPhysicalDeviceLimits& limits, const DispatchSize groups,
+                           const VkExtent3D localSize, const std::uint32_t pushConstantBytes,
+                           const std::span<const VkDeviceSize> storageBufferRanges) {
+    const std::array groupCounts{groups.x, groups.y, groups.z};
+    const std::array localSizes{localSize.width, localSize.height, localSize.depth};
+    for (std::size_t axis = 0; axis < groupCounts.size(); ++axis) {
+        if (groupCounts[axis] > limits.maxComputeWorkGroupCount[axis]) {
+            throw std::out_of_range("Compute dispatch group count exceeds the device limit");
+        }
+        if (localSizes[axis] == 0 || localSizes[axis] > limits.maxComputeWorkGroupSize[axis]) {
+            throw std::out_of_range("Compute local size exceeds the device limit");
+        }
+    }
+
+    const std::uint64_t invocations =
+        static_cast<std::uint64_t>(localSize.width) * localSize.height * localSize.depth;
+    if (invocations > limits.maxComputeWorkGroupInvocations) {
+        throw std::out_of_range("Compute local invocation count exceeds the device limit");
+    }
+    if (pushConstantBytes > limits.maxPushConstantsSize) {
+        throw std::out_of_range("Compute push constants exceed the device limit");
+    }
+    for (const VkDeviceSize range : storageBufferRanges) {
+        if (range == 0 || range == VK_WHOLE_SIZE || range > limits.maxStorageBufferRange) {
+            throw std::out_of_range("Storage buffer descriptor range exceeds the device limit");
+        }
+    }
+}
+
+DispatchSize checkedDispatchSize(const VkPhysicalDevice physicalDevice,
+                                 const ComputeDispatchConfig& config) {
+    if (physicalDevice == VK_NULL_HANDLE) {
+        throw std::invalid_argument("Checked dispatch requires a physical device");
+    }
+    const DispatchSize groups = dispatchSize(config.problemSize, config.localSize);
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(physicalDevice, &properties);
+    validateComputeLimits(properties.limits, groups, config.localSize, config.pushConstantBytes,
+                          config.storageBufferRanges);
+    return groups;
 }
 
 void cmdBufferBarrier(const VkCommandBuffer commands, const VkBuffer buffer,
@@ -203,8 +246,18 @@ ComputePipelineBuilder::addPushConstantRange(const VkShaderStageFlags stages,
 }
 
 ComputePipeline ComputePipelineBuilder::build() const {
-    if (device_ == VK_NULL_HANDLE || shaderPath_.empty() || entryPoint_.empty()) {
+    if (physicalDevice_ == VK_NULL_HANDLE || device_ == VK_NULL_HANDLE || shaderPath_.empty() ||
+        entryPoint_.empty()) {
         throw std::logic_error("Compute pipeline builder is incomplete");
+    }
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(physicalDevice_, &properties);
+    for (const VkPushConstantRange& range : pushConstants_) {
+        if (range.offset % 4 != 0 || range.size % 4 != 0 ||
+            range.offset > properties.limits.maxPushConstantsSize ||
+            range.size > properties.limits.maxPushConstantsSize - range.offset) {
+            throw std::out_of_range("Compute push constant range exceeds the device limit");
+        }
     }
     ComputePipeline result;
     VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};

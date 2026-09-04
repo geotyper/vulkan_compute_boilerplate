@@ -92,6 +92,52 @@ void testDispatchSize() {
         rejectedZero = true;
     }
     check(rejectedZero, "Zero local size rejection");
+
+    VkPhysicalDeviceLimits limits{};
+    limits.maxComputeWorkGroupCount[0] = 1024;
+    limits.maxComputeWorkGroupCount[1] = 1024;
+    limits.maxComputeWorkGroupCount[2] = 64;
+    limits.maxComputeWorkGroupSize[0] = 1024;
+    limits.maxComputeWorkGroupSize[1] = 1024;
+    limits.maxComputeWorkGroupSize[2] = 64;
+    limits.maxComputeWorkGroupInvocations = 1024;
+    limits.maxPushConstantsSize = 128;
+    limits.maxStorageBufferRange = 4096;
+    const std::array<VkDeviceSize, 2> validRanges{1024, 2048};
+    vkexp::validateComputeLimits(limits, groups, {8, 8, 1}, 16, validRanges);
+
+    bool rejectedGroupCount = false;
+    try {
+        vkexp::validateComputeLimits(limits, {1025, 1, 1}, {8, 8, 1});
+    } catch (const std::exception&) {
+        rejectedGroupCount = true;
+    }
+    check(rejectedGroupCount, "Dispatch group limit rejection");
+
+    bool rejectedInvocations = false;
+    try {
+        vkexp::validateComputeLimits(limits, {1, 1, 1}, {64, 64, 1});
+    } catch (const std::exception&) {
+        rejectedInvocations = true;
+    }
+    check(rejectedInvocations, "Local invocation limit rejection");
+
+    bool rejectedPushConstants = false;
+    try {
+        vkexp::validateComputeLimits(limits, {1, 1, 1}, {8, 8, 1}, 132);
+    } catch (const std::exception&) {
+        rejectedPushConstants = true;
+    }
+    check(rejectedPushConstants, "Push constant limit rejection");
+
+    const std::array<VkDeviceSize, 1> oversizedRange{8192};
+    bool rejectedStorageRange = false;
+    try {
+        vkexp::validateComputeLimits(limits, {1, 1, 1}, {8, 8, 1}, 0, oversizedRange);
+    } catch (const std::exception&) {
+        rejectedStorageRange = true;
+    }
+    check(rejectedStorageRange, "Storage buffer range limit rejection");
 }
 
 void testPingPongState() {

@@ -151,7 +151,7 @@ int run() {
         .writeBuffer(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, state.write().buffer())
         .update(device.value, descriptorSet);
     const vkexp::ComputePipeline pipeline =
-        vkexp::ComputePipelineBuilder{device.value}
+        vkexp::ComputePipelineBuilder{physicalDevice, device.value}
             .shader(VKEXP_SHADER_DIR "/game_of_life.comp.spv")
             .addDescriptorSetLayout(setLayout.get())
             .addPushConstantRange(VK_SHADER_STAGE_COMPUTE_BIT, sizeof(GridSize))
@@ -164,8 +164,10 @@ int run() {
                                 &descriptorSet, 0, nullptr);
         vkCmdPushConstants(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
                            sizeof(GridSize), &grid);
-        const vkexp::DispatchSize groups =
-            vkexp::dispatchSize({grid.width, grid.height, 1}, {8, 8, 1});
+        const std::array<VkDeviceSize, 2> storageRanges{state.read().size(), state.write().size()};
+        const vkexp::DispatchSize groups = vkexp::checkedDispatchSize(
+            physicalDevice,
+            {{grid.width, grid.height, 1}, {8, 8, 1}, sizeof(GridSize), storageRanges});
         vkCmdDispatch(commands, groups.x, groups.y, groups.z);
     });
     state.swap();
