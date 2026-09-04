@@ -140,6 +140,39 @@ void testDispatchSize() {
     check(rejectedStorageRange, "Storage buffer range limit rejection");
 }
 
+void testComputeResourceValidation() {
+    check(vkexp::tightlyPackedImageSize(VK_FORMAT_R8G8B8A8_UNORM, {4, 4}) == 64,
+          "RGBA8 tightly-packed image size");
+    check(vkexp::tightlyPackedImageSize(VK_FORMAT_R32G32_SFLOAT, {3, 2}) == 48,
+          "RG32 tightly-packed image size");
+
+    bool rejectedUnsupportedFormat = false;
+    try {
+        static_cast<void>(vkexp::tightlyPackedImageSize(VK_FORMAT_D32_SFLOAT, {4, 4}));
+    } catch (const std::exception&) {
+        rejectedUnsupportedFormat = true;
+    }
+    check(rejectedUnsupportedFormat, "Unsupported image transfer format rejection");
+
+    vkexp::ComputePipelineBuilder builder{VK_NULL_HANDLE, VK_NULL_HANDLE};
+    builder.specializationConstant(7, std::uint32_t{42});
+    bool rejectedDuplicateConstant = false;
+    try {
+        builder.specializationConstant(7, std::uint32_t{43});
+    } catch (const std::exception&) {
+        rejectedDuplicateConstant = true;
+    }
+    check(rejectedDuplicateConstant, "Duplicate specialization constant rejection");
+
+    bool rejectedUnavailableDescriptorSet = false;
+    try {
+        static_cast<void>(vkexp::PingPongDescriptorSets{}.forReadIndex(0));
+    } catch (const std::exception&) {
+        rejectedUnavailableDescriptorSet = true;
+    }
+    check(rejectedUnavailableDescriptorSet, "Unavailable ping-pong descriptor rejection");
+}
+
 void testPingPongState() {
     vkexp::PingPongBuffer buffers;
     check(buffers.readIndex() == 0 && buffers.writeIndex() == 1, "Initial ping-pong indices");
@@ -156,6 +189,7 @@ int main() {
     testCpuProfiler();
     testPresetRegistry();
     testDispatchSize();
+    testComputeResourceValidation();
     testPingPongState();
     return failures == 0 ? 0 : 1;
 }

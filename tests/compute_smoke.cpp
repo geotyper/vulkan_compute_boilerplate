@@ -1,4 +1,4 @@
-#include "vkexp/compute/ComputeResources.hpp"
+#include "vkexp/compute/HeadlessComputeContext.hpp"
 
 #include <vulkan/vulkan.h>
 
@@ -7,109 +7,15 @@
 #include <exception>
 #include <iostream>
 #include <stdexcept>
-#include <vector>
 
 namespace {
-
-class VulkanUnavailable final : public std::runtime_error {
-public:
-    using std::runtime_error::runtime_error;
-};
-
-struct InstanceOwner {
-    VkInstance value{};
-    ~InstanceOwner() {
-        if (value != VK_NULL_HANDLE) {
-            vkDestroyInstance(value, nullptr);
-        }
-    }
-};
-
-struct DeviceOwner {
-    VkDevice value{};
-    ~DeviceOwner() {
-        if (value != VK_NULL_HANDLE) {
-            vkDestroyDevice(value, nullptr);
-        }
-    }
-};
 
 struct GridSize {
     std::uint32_t width;
     std::uint32_t height;
 };
 
-int run() {
-    VkApplicationInfo application{VK_STRUCTURE_TYPE_APPLICATION_INFO};
-    application.pApplicationName = "vkexp compute smoke";
-    application.apiVersion = VK_API_VERSION_1_3;
-    VkInstanceCreateInfo instanceInfo{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
-    instanceInfo.pApplicationInfo = &application;
-    InstanceOwner instance;
-    if (vkCreateInstance(&instanceInfo, nullptr, &instance.value) != VK_SUCCESS) {
-        throw VulkanUnavailable("Vulkan 1.3 instance is unavailable");
-    }
-
-    std::uint32_t physicalDeviceCount{};
-    if (vkEnumeratePhysicalDevices(instance.value, &physicalDeviceCount, nullptr) != VK_SUCCESS ||
-        physicalDeviceCount == 0) {
-        throw VulkanUnavailable("No Vulkan physical device is available");
-    }
-    std::vector<VkPhysicalDevice> devices(physicalDeviceCount);
-    vkEnumeratePhysicalDevices(instance.value, &physicalDeviceCount, devices.data());
-
-    VkPhysicalDevice physicalDevice{};
-    std::uint32_t queueFamily{};
-    for (const VkPhysicalDevice candidate : devices) {
-        VkPhysicalDeviceProperties properties{};
-        vkGetPhysicalDeviceProperties(candidate, &properties);
-        VkPhysicalDeviceVulkan13Features features{
-            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
-        VkPhysicalDeviceFeatures2 features2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
-        features2.pNext = &features;
-        vkGetPhysicalDeviceFeatures2(candidate, &features2);
-        if (properties.apiVersion < VK_API_VERSION_1_3 || features.synchronization2 != VK_TRUE) {
-            continue;
-        }
-
-        std::uint32_t familyCount{};
-        vkGetPhysicalDeviceQueueFamilyProperties(candidate, &familyCount, nullptr);
-        std::vector<VkQueueFamilyProperties> families(familyCount);
-        vkGetPhysicalDeviceQueueFamilyProperties(candidate, &familyCount, families.data());
-        for (std::uint32_t index = 0; index < familyCount; ++index) {
-            if ((families[index].queueFlags & VK_QUEUE_COMPUTE_BIT) != 0) {
-                physicalDevice = candidate;
-                queueFamily = index;
-                break;
-            }
-        }
-        if (physicalDevice != VK_NULL_HANDLE) {
-            break;
-        }
-    }
-    if (physicalDevice == VK_NULL_HANDLE) {
-        throw VulkanUnavailable("No Vulkan 1.3 compute queue with synchronization2 is available");
-    }
-
-    constexpr float queuePriority = 1.0F;
-    VkDeviceQueueCreateInfo queueInfo{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
-    queueInfo.queueFamilyIndex = queueFamily;
-    queueInfo.queueCount = 1;
-    queueInfo.pQueuePriorities = &queuePriority;
-    VkPhysicalDeviceVulkan13Features features{
-        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
-    features.synchronization2 = VK_TRUE;
-    VkDeviceCreateInfo deviceInfo{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
-    deviceInfo.pNext = &features;
-    deviceInfo.queueCreateInfoCount = 1;
-    deviceInfo.pQueueCreateInfos = &queueInfo;
-    DeviceOwner device;
-    if (vkCreateDevice(physicalDevice, &deviceInfo, nullptr, &device.value) != VK_SUCCESS) {
-        throw VulkanUnavailable("Unable to create the Vulkan compute device");
-    }
-    VkQueue queue{};
-    vkGetDeviceQueue(device.value, queueFamily, 0, &queue);
-
+void runGameOfLife(vkexp::HeadlessComputeContext& context) {
     constexpr GridSize grid{16, 16};
     constexpr std::size_t cellCount = grid.width * grid.height;
     constexpr VkDeviceSize byteSize = cellCount * sizeof(std::uint32_t);
@@ -120,11 +26,10 @@ int run() {
     initial[center + 1] = 1;
 
     vkexp::PingPongBuffer state;
-    state.create(physicalDevice, device.value,
+    state.create(context.physicalDevice(), context.device(),
                  {byteSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
                                 VK_BUFFER_USAGE_TRANSFER_DST_BIT});
-    vkexp::ImmediateContext immediate{physicalDevice, device.value, queueFamily, queue};
-    immediate.uploadBuffer(state.read(), initial.data(), byteSize);
+    context.immediate().uploadBuffer(state.read(), initial.data(), byteSize);
 
     std::array<VkDescriptorSetLayoutBinding, 2> bindings{};
     for (std::uint32_t index = 0; index < bindings.size(); ++index) {
@@ -137,51 +42,107 @@ int run() {
     layoutInfo.bindingCount = static_cast<std::uint32_t>(bindings.size());
     layoutInfo.pBindings = bindings.data();
     vkexp::UniqueDescriptorSetLayout setLayout;
-    if (vkCreateDescriptorSetLayout(device.value, &layoutInfo, nullptr,
-                                    setLayout.put(device.value)) != VK_SUCCESS) {
+    if (vkCreateDescriptorSetLayout(context.device(), &layoutInfo, nullptr,
+                                    setLayout.put(context.device())) != VK_SUCCESS) {
         throw std::runtime_error("Unable to create smoke descriptor set layout");
     }
 
-    vkexp::DescriptorAllocator descriptors{
-        device.value,
-        {1, {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, static_cast<std::uint32_t>(bindings.size())}}}};
-    const VkDescriptorSet descriptorSet = descriptors.allocate(setLayout.get());
-    vkexp::DescriptorSetWriter{}
-        .writeBuffer(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, state.read().buffer())
-        .writeBuffer(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, state.write().buffer())
-        .update(device.value, descriptorSet);
+    vkexp::DescriptorAllocator descriptors{context.device(),
+                                           {2, {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4}}}};
+    vkexp::PingPongDescriptorSets descriptorSets;
+    descriptorSets.createStorageBuffers(context.physicalDevice(), context.device(), descriptors,
+                                        setLayout.get(), state);
+
+    constexpr std::uint32_t aliveValue = 1;
     const vkexp::ComputePipeline pipeline =
-        vkexp::ComputePipelineBuilder{physicalDevice, device.value}
+        vkexp::ComputePipelineBuilder{context.physicalDevice(), context.device()}
             .shader(VKEXP_SHADER_DIR "/game_of_life.comp.spv")
             .addDescriptorSetLayout(setLayout.get())
             .addPushConstantRange(VK_SHADER_STAGE_COMPUTE_BIT, sizeof(GridSize))
+            .specializationConstant(0, aliveValue)
             .build();
 
-    immediate.execute([&](const VkCommandBuffer commands) {
+    context.immediate().execute([&](const VkCommandBuffer commands) {
         vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline.pipeline());
         const VkPipelineLayout pipelineLayout = pipeline.layout();
-        vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1,
-                                &descriptorSet, 0, nullptr);
         vkCmdPushConstants(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0,
                            sizeof(GridSize), &grid);
-        const std::array<VkDeviceSize, 2> storageRanges{state.read().size(), state.write().size()};
-        const vkexp::DispatchSize groups = vkexp::checkedDispatchSize(
-            physicalDevice,
-            {{grid.width, grid.height, 1}, {8, 8, 1}, sizeof(GridSize), storageRanges});
-        vkCmdDispatch(commands, groups.x, groups.y, groups.z);
+        for (int step = 0; step < 2; ++step) {
+            const VkDescriptorSet descriptorSet = descriptorSets.current(state);
+            vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1,
+                                    &descriptorSet, 0, nullptr);
+            const std::array<VkDeviceSize, 2> storageRanges{state.read().size(),
+                                                            state.write().size()};
+            const vkexp::DispatchSize groups = vkexp::checkedDispatchSize(
+                context.physicalDevice(),
+                {{grid.width, grid.height, 1}, {8, 8, 1}, sizeof(GridSize), storageRanges});
+            vkCmdDispatch(commands, groups.x, groups.y, groups.z);
+            vkexp::cmdComputePingPongBarrier(commands, state);
+            state.swap();
+        }
     });
-    state.swap();
 
     std::array<std::uint32_t, cellCount> result{};
-    immediate.readbackBuffer(state.read(), result.data(), byteSize);
-    std::array<std::uint32_t, cellCount> expected{};
-    expected[center - grid.width] = 1;
-    expected[center] = 1;
-    expected[center + grid.width] = 1;
-    if (result != expected) {
-        throw std::runtime_error("Game of Life GPU result did not match the expected blinker");
+    context.immediate().readbackBuffer(state.read(), result.data(), byteSize);
+    if (result != initial) {
+        throw std::runtime_error("Two Game of Life GPU steps did not restore the blinker");
     }
-    std::cout << "Headless compute smoke test passed\n";
+}
+
+void runImageRoundTrip(vkexp::HeadlessComputeContext& context) {
+    constexpr VkExtent2D extent{4, 4};
+    constexpr std::size_t byteCount = extent.width * extent.height * 4;
+    std::array<std::uint8_t, byteCount> pixels{};
+    for (std::size_t index = 0; index < pixels.size(); ++index) {
+        pixels[index] = static_cast<std::uint8_t>(index * 3);
+    }
+
+    vkexp::PingPongImage images;
+    images.create(context.physicalDevice(), context.device(),
+                  {extent, VK_FORMAT_R8G8B8A8_UNORM,
+                   VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                       VK_IMAGE_USAGE_TRANSFER_DST_BIT});
+    context.immediate().uploadImage(images.read(), pixels.data(), pixels.size());
+
+    std::array<VkDescriptorSetLayoutBinding, 2> bindings{};
+    for (std::uint32_t index = 0; index < bindings.size(); ++index) {
+        bindings[index].binding = index;
+        bindings[index].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        bindings[index].descriptorCount = 1;
+        bindings[index].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    }
+    VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    layoutInfo.bindingCount = static_cast<std::uint32_t>(bindings.size());
+    layoutInfo.pBindings = bindings.data();
+    vkexp::UniqueDescriptorSetLayout setLayout;
+    if (vkCreateDescriptorSetLayout(context.device(), &layoutInfo, nullptr,
+                                    setLayout.put(context.device())) != VK_SUCCESS) {
+        throw std::runtime_error("Unable to create image descriptor set layout");
+    }
+    vkexp::DescriptorAllocator descriptors{context.device(),
+                                           {2, {{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4}}}};
+    vkexp::PingPongDescriptorSets descriptorSets;
+    descriptorSets.createStorageImages(context.device(), descriptors, setLayout.get(), images);
+    const VkDescriptorSet firstSet = descriptorSets.current(images);
+    images.swap();
+    const VkDescriptorSet secondSet = descriptorSets.current(images);
+    if (firstSet == secondSet) {
+        throw std::runtime_error("Image ping-pong descriptors did not switch sets");
+    }
+    images.swap();
+
+    std::array<std::uint8_t, byteCount> downloaded{};
+    context.immediate().readbackImage(images.read(), downloaded.data(), downloaded.size());
+    if (downloaded != pixels) {
+        throw std::runtime_error("GPU image upload/readback did not preserve RGBA8 data");
+    }
+}
+
+int run() {
+    vkexp::HeadlessComputeContext context{{"vkexp compute smoke"}};
+    runGameOfLife(context);
+    runImageRoundTrip(context);
+    std::cout << "Headless compute smoke test passed on " << context.deviceName() << '\n';
     return 0;
 }
 
@@ -190,7 +151,7 @@ int run() {
 int main() {
     try {
         return run();
-    } catch (const VulkanUnavailable& error) {
+    } catch (const vkexp::HeadlessComputeUnavailable& error) {
         std::cout << "SKIPPED: " << error.what() << '\n';
         return 77;
     } catch (const std::exception& error) {

@@ -8,6 +8,7 @@
 #include <functional>
 #include <span>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace vkexp {
@@ -32,6 +33,14 @@ void validateComputeLimits(const VkPhysicalDeviceLimits& limits, DispatchSize gr
                            std::span<const VkDeviceSize> storageBufferRanges = {});
 [[nodiscard]] DispatchSize checkedDispatchSize(VkPhysicalDevice physicalDevice,
                                                const ComputeDispatchConfig& config);
+
+struct ImageState {
+    VkImageLayout layout{VK_IMAGE_LAYOUT_GENERAL};
+    VkPipelineStageFlags2 stage{VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT};
+    VkAccessFlags2 access{VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT};
+};
+
+[[nodiscard]] VkDeviceSize tightlyPackedImageSize(VkFormat format, VkExtent2D extent);
 
 void cmdBufferBarrier(VkCommandBuffer commands, VkBuffer buffer, VkPipelineStageFlags2 sourceStage,
                       VkAccessFlags2 sourceAccess, VkPipelineStageFlags2 destinationStage,
@@ -122,6 +131,13 @@ public:
     ComputePipelineBuilder& addDescriptorSetLayout(VkDescriptorSetLayout layout);
     ComputePipelineBuilder& addPushConstantRange(VkShaderStageFlags stages, std::uint32_t size,
                                                  std::uint32_t offset = 0);
+    ComputePipelineBuilder& specializationConstant(std::uint32_t constantId, const void* data,
+                                                   std::size_t size);
+    template <typename T>
+        requires std::is_trivially_copyable_v<T>
+    ComputePipelineBuilder& specializationConstant(const std::uint32_t constantId, const T& value) {
+        return specializationConstant(constantId, &value, sizeof(T));
+    }
     [[nodiscard]] ComputePipeline build() const;
 
 private:
@@ -131,6 +147,8 @@ private:
     std::string entryPoint_{"main"};
     std::vector<VkDescriptorSetLayout> setLayouts_;
     std::vector<VkPushConstantRange> pushConstants_;
+    std::vector<VkSpecializationMapEntry> specializationEntries_;
+    std::vector<std::byte> specializationData_;
 };
 
 class ImmediateContext {
@@ -152,6 +170,12 @@ public:
                       VkDeviceSize destinationOffset = 0) const;
     void readbackBuffer(const BufferResource& source, void* data, VkDeviceSize size,
                         VkDeviceSize sourceOffset = 0) const;
+    void uploadImage(ImageResource& destination, const void* data, VkDeviceSize size,
+                     ImageState before = {VK_IMAGE_LAYOUT_UNDEFINED,
+                                          VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0},
+                     ImageState after = {}) const;
+    void readbackImage(const ImageResource& source, void* data, VkDeviceSize size,
+                       ImageState before = {}, ImageState after = {}) const;
 
 private:
     VkPhysicalDevice physicalDevice_{};
@@ -196,6 +220,33 @@ public:
 private:
     std::array<ImageResource, 2> resources_;
     std::uint32_t readIndex_{};
+};
+
+void cmdComputePingPongBarrier(VkCommandBuffer commands, const PingPongBuffer& resources);
+void cmdComputePingPongBarrier(VkCommandBuffer commands, const PingPongImage& resources);
+
+class PingPongDescriptorSets {
+public:
+    void createStorageBuffers(VkPhysicalDevice physicalDevice, VkDevice device,
+                              const DescriptorAllocator& allocator, VkDescriptorSetLayout layout,
+                              const PingPongBuffer& resources, std::uint32_t readBinding = 0,
+                              std::uint32_t writeBinding = 1);
+    void createStorageImages(VkDevice device, const DescriptorAllocator& allocator,
+                             VkDescriptorSetLayout layout, const PingPongImage& resources,
+                             VkImageLayout imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+                             std::uint32_t readBinding = 0, std::uint32_t writeBinding = 1);
+    void reset() { sets_ = {}; }
+
+    [[nodiscard]] VkDescriptorSet forReadIndex(std::uint32_t readIndex) const;
+    [[nodiscard]] VkDescriptorSet current(const PingPongBuffer& resources) const {
+        return forReadIndex(resources.readIndex());
+    }
+    [[nodiscard]] VkDescriptorSet current(const PingPongImage& resources) const {
+        return forReadIndex(resources.readIndex());
+    }
+
+private:
+    std::array<VkDescriptorSet, 2> sets_{};
 };
 
 } // namespace vkexp

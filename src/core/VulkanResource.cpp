@@ -177,6 +177,8 @@ void ImageResource::create(const VkPhysicalDevice physicalDevice, const VkDevice
     }
     sampler_.reset(device, sampler);
     extent_ = config.extent;
+    format_ = config.format;
+    usage_ = config.usage;
 }
 
 void ImageResource::reset() {
@@ -185,6 +187,8 @@ void ImageResource::reset() {
     image_.reset();
     memory_.reset();
     extent_ = {};
+    format_ = VK_FORMAT_UNDEFINED;
+    usage_ = 0;
 }
 
 UniqueShaderModule loadShaderModule(const VkDevice device, const std::string_view path) {

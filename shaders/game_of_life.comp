@@ -15,6 +15,8 @@ layout(push_constant) uniform GridSize {
     uint height;
 } grid;
 
+layout(constant_id = 0) const uint aliveValue = 1;
+
 uint cellAt(ivec2 position) {
     const ivec2 size = ivec2(grid.width, grid.height);
     const ivec2 wrapped = (position % size + size) % size;
@@ -37,5 +39,5 @@ void main() {
     }
     const uint current = cellAt(ivec2(position));
     const bool alive = neighbours == 3 || (current != 0 && neighbours == 2);
-    outputGrid.cells[position.y * grid.width + position.x] = alive ? 1 : 0;
+    outputGrid.cells[position.y * grid.width + position.x] = alive ? aliveValue : 0;
 }

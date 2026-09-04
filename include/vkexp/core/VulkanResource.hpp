@@ -134,6 +134,9 @@ public:
     [[nodiscard]] VkImageView view() const { return view_.get(); }
     [[nodiscard]] VkSampler sampler() const { return sampler_.get(); }
     [[nodiscard]] VkExtent2D extent() const { return extent_; }
+    [[nodiscard]] VkFormat format() const { return format_; }
+    [[nodiscard]] VkImageUsageFlags usage() const { return usage_; }
+    [[nodiscard]] explicit operator bool() const { return static_cast<bool>(image_); }
 
 private:
     UniqueDeviceMemory memory_;
@@ -141,6 +144,8 @@ private:
     UniqueImageView view_;
     UniqueSampler sampler_;
     VkExtent2D extent_{};
+    VkFormat format_{VK_FORMAT_UNDEFINED};
+    VkImageUsageFlags usage_{};
 };
 
 [[nodiscard]] UniqueShaderModule loadShaderModule(VkDevice device, std::string_view path);

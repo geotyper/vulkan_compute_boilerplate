@@ -1,6 +1,8 @@
 #include "vkexp/compute/ComputeResources.hpp"
 
+#include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -64,6 +66,101 @@ DispatchSize checkedDispatchSize(const VkPhysicalDevice physicalDevice,
     validateComputeLimits(properties.limits, groups, config.localSize, config.pushConstantBytes,
                           config.storageBufferRanges);
     return groups;
+}
+
+VkDeviceSize tightlyPackedImageSize(const VkFormat format, const VkExtent2D extent) {
+    if (extent.width == 0 || extent.height == 0) {
+        throw std::invalid_argument("Image transfer extent cannot contain zero");
+    }
+    VkDeviceSize texelSize{};
+    switch (format) {
+    case VK_FORMAT_R8_UNORM:
+    case VK_FORMAT_R8_SNORM:
+    case VK_FORMAT_R8_UINT:
+    case VK_FORMAT_R8_SINT:
+    case VK_FORMAT_R8_SRGB:
+        texelSize = 1;
+        break;
+    case VK_FORMAT_R8G8_UNORM:
+    case VK_FORMAT_R8G8_SNORM:
+    case VK_FORMAT_R8G8_UINT:
+    case VK_FORMAT_R8G8_SINT:
+    case VK_FORMAT_R8G8_SRGB:
+    case VK_FORMAT_R16_UNORM:
+    case VK_FORMAT_R16_SNORM:
+    case VK_FORMAT_R16_UINT:
+    case VK_FORMAT_R16_SINT:
+    case VK_FORMAT_R16_SFLOAT:
+        texelSize = 2;
+        break;
+    case VK_FORMAT_R8G8B8_UNORM:
+    case VK_FORMAT_R8G8B8_SNORM:
+    case VK_FORMAT_R8G8B8_UINT:
+    case VK_FORMAT_R8G8B8_SINT:
+    case VK_FORMAT_R8G8B8_SRGB:
+    case VK_FORMAT_B8G8R8_UNORM:
+    case VK_FORMAT_B8G8R8_SNORM:
+    case VK_FORMAT_B8G8R8_UINT:
+    case VK_FORMAT_B8G8R8_SINT:
+    case VK_FORMAT_B8G8R8_SRGB:
+        texelSize = 3;
+        break;
+    case VK_FORMAT_R8G8B8A8_UNORM:
+    case VK_FORMAT_R8G8B8A8_SNORM:
+    case VK_FORMAT_R8G8B8A8_UINT:
+    case VK_FORMAT_R8G8B8A8_SINT:
+    case VK_FORMAT_R8G8B8A8_SRGB:
+    case VK_FORMAT_B8G8R8A8_UNORM:
+    case VK_FORMAT_B8G8R8A8_SNORM:
+    case VK_FORMAT_B8G8R8A8_UINT:
+    case VK_FORMAT_B8G8R8A8_SINT:
+    case VK_FORMAT_B8G8R8A8_SRGB:
+    case VK_FORMAT_R16G16_UNORM:
+    case VK_FORMAT_R16G16_SNORM:
+    case VK_FORMAT_R16G16_UINT:
+    case VK_FORMAT_R16G16_SINT:
+    case VK_FORMAT_R16G16_SFLOAT:
+    case VK_FORMAT_R32_UINT:
+    case VK_FORMAT_R32_SINT:
+    case VK_FORMAT_R32_SFLOAT:
+        texelSize = 4;
+        break;
+    case VK_FORMAT_R16G16B16_UNORM:
+    case VK_FORMAT_R16G16B16_SNORM:
+    case VK_FORMAT_R16G16B16_UINT:
+    case VK_FORMAT_R16G16B16_SINT:
+    case VK_FORMAT_R16G16B16_SFLOAT:
+        texelSize = 6;
+        break;
+    case VK_FORMAT_R16G16B16A16_UNORM:
+    case VK_FORMAT_R16G16B16A16_SNORM:
+    case VK_FORMAT_R16G16B16A16_UINT:
+    case VK_FORMAT_R16G16B16A16_SINT:
+    case VK_FORMAT_R16G16B16A16_SFLOAT:
+    case VK_FORMAT_R32G32_UINT:
+    case VK_FORMAT_R32G32_SINT:
+    case VK_FORMAT_R32G32_SFLOAT:
+        texelSize = 8;
+        break;
+    case VK_FORMAT_R32G32B32_UINT:
+    case VK_FORMAT_R32G32B32_SINT:
+    case VK_FORMAT_R32G32B32_SFLOAT:
+        texelSize = 12;
+        break;
+    case VK_FORMAT_R32G32B32A32_UINT:
+    case VK_FORMAT_R32G32B32A32_SINT:
+    case VK_FORMAT_R32G32B32A32_SFLOAT:
+        texelSize = 16;
+        break;
+    default:
+        throw std::invalid_argument("Unsupported tightly-packed image transfer format");
+    }
+    const VkDeviceSize pixels =
+        static_cast<VkDeviceSize>(extent.width) * static_cast<VkDeviceSize>(extent.height);
+    if (pixels > std::numeric_limits<VkDeviceSize>::max() / texelSize) {
+        throw std::overflow_error("Tightly-packed image size overflow");
+    }
+    return pixels * texelSize;
 }
 
 void cmdBufferBarrier(const VkCommandBuffer commands, const VkBuffer buffer,
@@ -245,6 +342,30 @@ ComputePipelineBuilder::addPushConstantRange(const VkShaderStageFlags stages,
     return *this;
 }
 
+ComputePipelineBuilder&
+ComputePipelineBuilder::specializationConstant(const std::uint32_t constantId, const void* data,
+                                               const std::size_t size) {
+    if (data == nullptr || size == 0) {
+        throw std::invalid_argument("Specialization constant data cannot be empty");
+    }
+    const auto duplicate =
+        std::find_if(specializationEntries_.begin(), specializationEntries_.end(),
+                     [constantId](const VkSpecializationMapEntry& entry) {
+                         return entry.constantID == constantId;
+                     });
+    if (duplicate != specializationEntries_.end()) {
+        throw std::invalid_argument("Duplicate specialization constant ID");
+    }
+    const std::size_t offset = specializationData_.size();
+    if (offset > std::numeric_limits<std::uint32_t>::max()) {
+        throw std::overflow_error("Specialization constant data offset exceeds Vulkan limits");
+    }
+    const auto* bytes = static_cast<const std::byte*>(data);
+    specializationData_.insert(specializationData_.end(), bytes, bytes + size);
+    specializationEntries_.push_back({constantId, static_cast<std::uint32_t>(offset), size});
+    return *this;
+}
+
 ComputePipeline ComputePipelineBuilder::build() const {
     if (physicalDevice_ == VK_NULL_HANDLE || device_ == VK_NULL_HANDLE || shaderPath_.empty() ||
         entryPoint_.empty()) {
@@ -275,6 +396,14 @@ ComputePipeline ComputePipelineBuilder::build() const {
     stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
     stage.module = module.get();
     stage.pName = entryPoint_.c_str();
+    VkSpecializationInfo specialization{};
+    if (!specializationEntries_.empty()) {
+        specialization.mapEntryCount = static_cast<std::uint32_t>(specializationEntries_.size());
+        specialization.pMapEntries = specializationEntries_.data();
+        specialization.dataSize = specializationData_.size();
+        specialization.pData = specializationData_.data();
+        stage.pSpecializationInfo = &specialization;
+    }
     VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
     pipelineInfo.stage = stage;
     pipelineInfo.layout = result.layout_.get();
@@ -401,6 +530,66 @@ void ImmediateContext::readbackBuffer(const BufferResource& source, void* data,
     staging.read(data, size);
 }
 
+void ImmediateContext::uploadImage(ImageResource& destination, const void* data,
+                                   const VkDeviceSize size, const ImageState before,
+                                   const ImageState after) const {
+    if (!destination || (destination.usage() & VK_IMAGE_USAGE_TRANSFER_DST_BIT) == 0) {
+        throw std::invalid_argument("Image upload requires a transfer-destination image");
+    }
+    if (size != tightlyPackedImageSize(destination.format(), destination.extent())) {
+        throw std::invalid_argument("Image upload size does not match its format and extent");
+    }
+    BufferResource staging;
+    staging.create(physicalDevice_, device_,
+                   {size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT});
+    staging.write(data, size);
+    execute([&](const VkCommandBuffer commands) {
+        cmdImageBarrier(commands, destination.image(), before.layout,
+                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, before.stage, before.access,
+                        VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        VkBufferImageCopy copy{};
+        copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        copy.imageSubresource.layerCount = 1;
+        copy.imageExtent = {destination.extent().width, destination.extent().height, 1};
+        vkCmdCopyBufferToImage(commands, staging.buffer(), destination.image(),
+                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+        cmdImageBarrier(commands, destination.image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                        after.layout, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                        VK_ACCESS_2_TRANSFER_WRITE_BIT, after.stage, after.access);
+    });
+}
+
+void ImmediateContext::readbackImage(const ImageResource& source, void* data,
+                                     const VkDeviceSize size, const ImageState before,
+                                     const ImageState after) const {
+    if (!source || (source.usage() & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) == 0) {
+        throw std::invalid_argument("Image readback requires a transfer-source image");
+    }
+    if (size != tightlyPackedImageSize(source.format(), source.extent())) {
+        throw std::invalid_argument("Image readback size does not match its format and extent");
+    }
+    BufferResource staging;
+    staging.create(physicalDevice_, device_,
+                   {size, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT});
+    execute([&](const VkCommandBuffer commands) {
+        cmdImageBarrier(commands, source.image(), before.layout,
+                        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, before.stage, before.access,
+                        VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+        VkBufferImageCopy copy{};
+        copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        copy.imageSubresource.layerCount = 1;
+        copy.imageExtent = {source.extent().width, source.extent().height, 1};
+        vkCmdCopyImageToBuffer(commands, source.image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                               staging.buffer(), 1, &copy);
+        cmdImageBarrier(commands, source.image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                        after.layout, VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                        VK_ACCESS_2_TRANSFER_READ_BIT, after.stage, after.access);
+    });
+    staging.read(data, size);
+}
+
 void PingPongBuffer::create(const VkPhysicalDevice physicalDevice, const VkDevice device,
                             const BufferResourceConfig& config) {
     reset();
@@ -425,6 +614,98 @@ void PingPongImage::reset() {
     resources_[0].reset();
     resources_[1].reset();
     readIndex_ = 0;
+}
+
+void cmdComputePingPongBarrier(const VkCommandBuffer commands, const PingPongBuffer& resources) {
+    cmdBufferBarrier(commands, resources.read().buffer(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_STORAGE_READ_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+    cmdBufferBarrier(commands, resources.write().buffer(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+}
+
+void cmdComputePingPongBarrier(const VkCommandBuffer commands, const PingPongImage& resources) {
+    cmdImageBarrier(commands, resources.read().image(), VK_IMAGE_LAYOUT_GENERAL,
+                    VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                    VK_ACCESS_2_SHADER_STORAGE_READ_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                    VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+    cmdImageBarrier(commands, resources.write().image(), VK_IMAGE_LAYOUT_GENERAL,
+                    VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                    VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                    VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+}
+
+void PingPongDescriptorSets::createStorageBuffers(const VkPhysicalDevice physicalDevice,
+                                                  const VkDevice device,
+                                                  const DescriptorAllocator& allocator,
+                                                  const VkDescriptorSetLayout layout,
+                                                  const PingPongBuffer& resources,
+                                                  const std::uint32_t readBinding,
+                                                  const std::uint32_t writeBinding) {
+    reset();
+    if (physicalDevice == VK_NULL_HANDLE || device == VK_NULL_HANDLE || !resources.read() ||
+        !resources.write() || readBinding == writeBinding ||
+        (resources.read().usage() & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) == 0 ||
+        (resources.write().usage() & VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) == 0) {
+        throw std::invalid_argument("Invalid ping-pong buffer descriptor configuration");
+    }
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(physicalDevice, &properties);
+    const std::array<VkDeviceSize, 2> ranges{resources.read().size(), resources.write().size()};
+    for (const VkDeviceSize range : ranges) {
+        if (range == 0 || range > properties.limits.maxStorageBufferRange) {
+            throw std::out_of_range("Ping-pong storage buffer exceeds the device limit");
+        }
+    }
+    sets_[0] = allocator.allocate(layout);
+    sets_[1] = allocator.allocate(layout);
+    DescriptorSetWriter{}
+        .writeBuffer(readBinding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, resources.read().buffer(), 0,
+                     resources.read().size())
+        .writeBuffer(writeBinding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, resources.write().buffer(), 0,
+                     resources.write().size())
+        .update(device, sets_[0]);
+    DescriptorSetWriter{}
+        .writeBuffer(readBinding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, resources.write().buffer(), 0,
+                     resources.write().size())
+        .writeBuffer(writeBinding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, resources.read().buffer(), 0,
+                     resources.read().size())
+        .update(device, sets_[1]);
+}
+
+void PingPongDescriptorSets::createStorageImages(
+    const VkDevice device, const DescriptorAllocator& allocator, const VkDescriptorSetLayout layout,
+    const PingPongImage& resources, const VkImageLayout imageLayout,
+    const std::uint32_t readBinding, const std::uint32_t writeBinding) {
+    reset();
+    if (device == VK_NULL_HANDLE || !resources.read() || !resources.write() ||
+        readBinding == writeBinding ||
+        (resources.read().usage() & VK_IMAGE_USAGE_STORAGE_BIT) == 0 ||
+        (resources.write().usage() & VK_IMAGE_USAGE_STORAGE_BIT) == 0) {
+        throw std::invalid_argument("Invalid ping-pong image descriptor configuration");
+    }
+    sets_[0] = allocator.allocate(layout);
+    sets_[1] = allocator.allocate(layout);
+    DescriptorSetWriter{}
+        .writeImage(readBinding, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, resources.read().view(),
+                    imageLayout)
+        .writeImage(writeBinding, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, resources.write().view(),
+                    imageLayout)
+        .update(device, sets_[0]);
+    DescriptorSetWriter{}
+        .writeImage(readBinding, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, resources.write().view(),
+                    imageLayout)
+        .writeImage(writeBinding, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, resources.read().view(),
+                    imageLayout)
+        .update(device, sets_[1]);
+}
+
+VkDescriptorSet PingPongDescriptorSets::forReadIndex(const std::uint32_t readIndex) const {
+    if (readIndex >= sets_.size() || sets_[readIndex] == VK_NULL_HANDLE) {
+        throw std::out_of_range("Ping-pong descriptor set index is unavailable");
+    }
+    return sets_[readIndex];
 }
 
 } // namespace vkexp

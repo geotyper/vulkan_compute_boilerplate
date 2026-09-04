@@ -24,6 +24,7 @@ vulkan_compute_boilerplate (composition root)
        -> VulkanResource
   -> vkexp_profiling
   -> vkexp_compute
+       -> HeadlessComputeContext
        -> ComputePipelineBuilder
        -> DescriptorAllocator / DescriptorSetWriter
        -> ImmediateContext
@@ -69,6 +70,10 @@ the demo UI displays it without owning the renderer.
 - [x] Validate dispatch, local workgroups, push constants, and storage buffer
       ranges against physical-device limits.
 - [x] Add a headless Game of Life smoke test.
+- [x] Extract reusable headless Vulkan instance/device/queue setup.
+- [x] Add tightly-packed colour image upload and readback.
+- [x] Add compute-pipeline specialization constants.
+- [x] Prebuild both descriptor sets for buffer and image ping-pong resources.
 - [x] Add automated unit and CLI smoke tests.
 - [ ] Add shader hot reload.
 - [ ] Add growing frame-aware descriptor pools.

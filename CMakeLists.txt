@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(vulkan_compute_boilerplate VERSION 0.2.0 LANGUAGES CXX)
+project(vulkan_compute_boilerplate VERSION 0.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -112,6 +112,7 @@ vkexp_enable_warnings(vkexp_imgui)
 
 add_library(vkexp_compute STATIC
     src/compute/ComputeResources.cpp
+    src/compute/HeadlessComputeContext.cpp
 )
 target_include_directories(vkexp_compute PUBLIC include)
 target_link_libraries(vkexp_compute PUBLIC vkexp_core)
