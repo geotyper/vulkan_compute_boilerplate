@@ -58,7 +58,7 @@ int main(const int argc, char** argv) {
         vkexp::Application app{vkexp::ApplicationConfig{
             state.preset.windowWidth,
             state.preset.windowHeight,
-            "Vulkan experiment framework",
+            "Vulkan compute boilerplate",
             validationEnabled,
         }};
 

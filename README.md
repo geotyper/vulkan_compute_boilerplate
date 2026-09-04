@@ -1,16 +1,22 @@
-# vulkan_boilerplate
+# vulkan_compute_boilerplate
 
-A modular C++20 starting point for Vulkan graphics and compute experiments,
-using GLFW, GLM, and Dear ImGui. The stable template baseline is tagged
-`v0.1.0`.
+A modular C++20 starting point for Vulkan compute experiments, using GLFW,
+GLM, and Dear ImGui for optional visualization. It builds on the
+`vulkan_boilerplate` template and adds reusable compute resources rather than
+application-specific simulation code.
 
 ## What is included
 
 - Vulkan 1.3 instance, device, swapchain, synchronization, and presentation;
 - a module lifecycle and a small composition root;
-- RAII wrappers for Vulkan handles, images, samplers, and shaders;
+- RAII wrappers for Vulkan handles, buffers, images, samplers, and shaders;
+- synchronous staging uploads and GPU readback through `ImmediateContext`;
+- a compute pipeline builder and descriptor allocator/writer;
+- `PingPongBuffer` and `PingPongImage` with explicit read/write swapping;
+- synchronization2 buffer/image barrier helpers and dispatch-size calculation;
 - off-screen graphics rendering displayed in an ImGui viewport;
 - a button-triggered compute blur example;
+- a headless Game of Life GPU smoke test suitable for software Vulkan;
 - CPU/GPU profiling with rolling statistics and synchronization breakdowns;
 - CMake debug/release presets, tests, and Linux CI.
 
@@ -18,10 +24,12 @@ The build is split into reusable targets:
 
 - `vkexp_core`: window, Vulkan context, frame loop, module lifecycle, and
   reusable Vulkan resources;
+- `vkexp_compute`: pipelines, descriptors, staging/readback, barriers,
+  dispatch helpers, and ping-pong resources;
 - `vkexp_profiling`: registered CPU/GPU timing metrics;
 - `vkexp_imgui`: the generic GLFW/Vulkan ImGui backend and profiler panel;
 - `vkexp_demo`: the triangle, compute blur, presets, and demo UI;
-- `vulkan_boilerplate`: the composition root in `src/main.cpp`.
+- `vulkan_compute_boilerplate`: the composition root in `src/main.cpp`.
 
 `Application` does not select modules. A derived project creates them in its
 composition root and adds them with `Application::addModule()`. Shared
@@ -34,8 +42,45 @@ window. The **Start** button dispatches a compute shader that applies a
 configurable box blur to the current triangle texture. The result remains in
 the independent **Blur Output** window until the next dispatch.
 
+The separate `game_of_life.comp` shader and `vkexp_compute_smoke` executable
+exercise a complete buffer-based cellular-automaton step without GLFW or a
+surface. They are infrastructure examples; a full interactive cellular
+automaton belongs in a derived project.
+
 ImGui persists the **Controls**, **Viewport**, **Blur Output**, and
 **Profiler** layouts in the active build directory's `imgui.ini`.
+
+## Reusable compute API
+
+Include `vkexp/compute/ComputeResources.hpp` and link `vkexp_compute`. A
+typical buffer workflow is:
+
+```cpp
+vkexp::PingPongBuffer state;
+state.create(physicalDevice, device, {
+    byteSize,
+    VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+});
+
+vkexp::ImmediateContext transfers{physicalDevice, device, queueFamily, queue};
+transfers.uploadBuffer(state.read(), initialData, byteSize);
+
+vkexp::DescriptorSetWriter{}
+    .writeBuffer(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, state.read().buffer())
+    .writeBuffer(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, state.write().buffer())
+    .update(device, descriptorSet);
+
+const vkexp::DispatchSize groups =
+    vkexp::dispatchSize({width, height, 1}, {8, 8, 1});
+vkCmdDispatch(commands, groups.x, groups.y, groups.z);
+state.swap();
+```
+
+`ImmediateContext` waits for each submitted transfer and is intended for
+initialization, tools, tests, and occasional readback. Per-frame streaming
+should use frame-owned staging allocations and asynchronous synchronization.
 
 ## Profiler
 
@@ -91,7 +136,7 @@ installed:
 cmake --preset debug
 cmake --build --preset debug
 ctest --preset debug
-./build/debug/vulkan_boilerplate --preset mixed
+./build/debug/vulkan_compute_boilerplate --preset mixed
 ```
 
 Build an optimized executable without tests with:
@@ -99,7 +144,7 @@ Build an optimized executable without tests with:
 ```bash
 cmake --preset release
 cmake --build --preset release
-./build/release/vulkan_boilerplate --preset mixed
+./build/release/vulkan_compute_boilerplate --preset mixed
 ```
 
 ## Command-line options
@@ -114,8 +159,8 @@ cmake --build --preset release
 | `--help`, `-h` | Print command-line help. |
 
 ```bash
-./build/debug/vulkan_boilerplate --list-presets
-./build/debug/vulkan_boilerplate --preset graphics --no-validation
+./build/debug/vulkan_compute_boilerplate --list-presets
+./build/debug/vulkan_compute_boilerplate --preset graphics --no-validation
 ```
 
 ## Configuration
@@ -151,13 +196,13 @@ only to the new project.
 Find template-specific names:
 
 ```bash
-rg -n "vulkan_boilerplate|Vulkan experiment framework"
+rg -n "vulkan_compute_boilerplate|Vulkan compute boilerplate"
 ```
 
 Then:
 
-1. rename `project(vulkan_boilerplate ...)` in `CMakeLists.txt`;
-2. rename the `vulkan_boilerplate` executable target and its test command;
+1. rename `project(vulkan_compute_boilerplate ...)` in `CMakeLists.txt`;
+2. rename the `vulkan_compute_boilerplate` executable target and its test command;
 3. update the application title in `src/main.cpp`;
 4. update executable paths and descriptions in this README;
 5. replace or remove `vkexp_demo` modules while retaining reusable targets;
@@ -174,7 +219,7 @@ README or license, then run:
 
 ```bash
 git clone --branch main --single-branch \
-  git@github.com:geotyper/vulkan_boilerplate.git my_new_project
+  git@github.com:geotyper/vulkan_compute_boilerplate.git my_new_project
 cd my_new_project
 git remote rename origin boilerplate
 git remote add origin git@github.com:geotyper/my_new_project.git
@@ -230,14 +275,18 @@ and composition example.
 
 ## Tests and CI
 
-The debug preset builds CPU-only unit tests and a CLI smoke test:
+The debug preset builds CPU-only unit tests, a CLI test, and a headless Vulkan
+compute smoke test:
 
 ```bash
 ctest --preset debug --output-on-failure
 ```
 
 GitHub Actions configures, builds, and tests the project on Linux. It does not
-currently launch the graphical application or compare rendered images.
+launch the graphical application or compare rendered images. The headless test
+returns CTest's skip code when no compatible Vulkan ICD exists; with a software
+or hardware Vulkan 1.3 device it validates upload, dispatch, ping-pong, and
+readback.
 
 ## Known limitations
 
@@ -245,7 +294,10 @@ currently launch the graphical application or compare rendered images.
 - the libraries are internal CMake targets and are not exported by
   `cmake --install`;
 - the renderer intentionally uses one frame in flight;
-- shader hot reload and a general descriptor allocator are not implemented;
+- `DescriptorAllocator` uses a fixed-capacity pool rather than automatic
+  pool growth;
+- `ImmediateContext` is synchronous and serializes its queue;
+- shader hot reload is not implemented;
 - automated rendering/image-comparison tests are not implemented.
 
 ## Troubleshooting

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(vulkan_boilerplate VERSION 0.1.0 LANGUAGES CXX)
+project(vulkan_compute_boilerplate VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -48,6 +48,7 @@ set(SHADER_SOURCES
     triangle.vert
     triangle.frag
     experiment.comp
+    game_of_life.comp
 )
 
 set(SHADER_BINARIES)
@@ -109,6 +110,13 @@ target_compile_definitions(vkexp_imgui PRIVATE
 )
 vkexp_enable_warnings(vkexp_imgui)
 
+add_library(vkexp_compute STATIC
+    src/compute/ComputeResources.cpp
+)
+target_include_directories(vkexp_compute PUBLIC include)
+target_link_libraries(vkexp_compute PUBLIC vkexp_core)
+vkexp_enable_warnings(vkexp_compute)
+
 add_library(vkexp_demo STATIC
     src/graphics/GraphicsModule.cpp
     src/compute/ComputeModule.cpp
@@ -118,7 +126,7 @@ add_library(vkexp_demo STATIC
 add_dependencies(vkexp_demo vkexp_shaders)
 target_include_directories(vkexp_demo PUBLIC include)
 target_link_libraries(vkexp_demo
-    PUBLIC vkexp_core vkexp_imgui glm::glm
+    PUBLIC vkexp_compute vkexp_imgui glm::glm
     PRIVATE imgui
 )
 target_compile_definitions(vkexp_demo PRIVATE
@@ -126,13 +134,13 @@ target_compile_definitions(vkexp_demo PRIVATE
 )
 vkexp_enable_warnings(vkexp_demo)
 
-add_executable(vulkan_boilerplate src/main.cpp)
-target_link_libraries(vulkan_boilerplate PRIVATE vkexp_demo)
-target_compile_definitions(vulkan_boilerplate PRIVATE
+add_executable(vulkan_compute_boilerplate src/main.cpp)
+target_link_libraries(vulkan_compute_boilerplate PRIVATE vkexp_demo)
+target_compile_definitions(vulkan_compute_boilerplate PRIVATE
     VKEXP_WINDOW_PRESET="${CMAKE_CURRENT_BINARY_DIR}/config/window.preset"
     $<$<AND:$<BOOL:${VKEXP_ENABLE_VALIDATION}>,$<CONFIG:Debug>>:VKEXP_ENABLE_VALIDATION>
 )
-vkexp_enable_warnings(vulkan_boilerplate)
+vkexp_enable_warnings(vulkan_compute_boilerplate)
 
 if(BUILD_TESTING)
     add_executable(vkexp_unit_tests tests/vkexp_unit_tests.cpp)
@@ -144,6 +152,15 @@ if(BUILD_TESTING)
 
     add_test(NAME vkexp_unit_tests COMMAND vkexp_unit_tests)
     add_test(NAME vkexp_cli_list_presets
-             COMMAND vulkan_boilerplate --list-presets)
-endif()
+             COMMAND vulkan_compute_boilerplate --list-presets)
 
+    add_executable(vkexp_compute_smoke tests/compute_smoke.cpp)
+    add_dependencies(vkexp_compute_smoke vkexp_shaders)
+    target_link_libraries(vkexp_compute_smoke PRIVATE vkexp_compute)
+    target_compile_definitions(vkexp_compute_smoke PRIVATE
+        VKEXP_SHADER_DIR="${SHADER_BINARY_DIR}"
+    )
+    vkexp_enable_warnings(vkexp_compute_smoke)
+    add_test(NAME vkexp_compute_smoke COMMAND vkexp_compute_smoke)
+    set_tests_properties(vkexp_compute_smoke PROPERTIES SKIP_RETURN_CODE 77)
+endif()

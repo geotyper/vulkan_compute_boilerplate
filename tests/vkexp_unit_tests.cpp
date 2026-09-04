@@ -1,3 +1,4 @@
+#include "vkexp/compute/ComputeResources.hpp"
 #include "vkexp/presets/PresetRegistry.hpp"
 #include "vkexp/profiling/CpuProfiler.hpp"
 #include "vkexp/profiling/ProfilerTypes.hpp"
@@ -75,11 +76,40 @@ void testPresetRegistry() {
     check(rejectedUnknown, "Unknown preset rejection");
 }
 
+void testDispatchSize() {
+    check(vkexp::divideRoundUp(17, 8) == 3, "Rounded-up integer division");
+    check(vkexp::divideRoundUp(16, 8) == 2, "Exact integer division");
+
+    const vkexp::DispatchSize groups = vkexp::dispatchSize({1921, 1081, 1}, {8, 8, 1});
+    check(groups.x == 241, "Dispatch width");
+    check(groups.y == 136, "Dispatch height");
+    check(groups.z == 1, "Dispatch depth");
+
+    bool rejectedZero = false;
+    try {
+        static_cast<void>(vkexp::dispatchSize({1, 1, 1}, {0, 1, 1}));
+    } catch (const std::exception&) {
+        rejectedZero = true;
+    }
+    check(rejectedZero, "Zero local size rejection");
+}
+
+void testPingPongState() {
+    vkexp::PingPongBuffer buffers;
+    check(buffers.readIndex() == 0 && buffers.writeIndex() == 1, "Initial ping-pong indices");
+    buffers.swap();
+    check(buffers.readIndex() == 1 && buffers.writeIndex() == 0, "Swapped ping-pong indices");
+    buffers.swap();
+    check(buffers.readIndex() == 0 && buffers.writeIndex() == 1, "Restored ping-pong indices");
+}
+
 } // namespace
 
 int main() {
     testTimingSeries();
     testCpuProfiler();
     testPresetRegistry();
+    testDispatchSize();
+    testPingPongState();
     return failures == 0 ? 0 : 1;
 }

@@ -2,6 +2,7 @@
 
 #include <vulkan/vulkan.h>
 
+#include <cstddef>
 #include <string_view>
 #include <utility>
 
@@ -60,9 +61,52 @@ using UniqueDescriptorSetLayout =
     UniqueDeviceHandle<VkDescriptorSetLayout, vkDestroyDescriptorSetLayout>;
 using UniqueDescriptorPool = UniqueDeviceHandle<VkDescriptorPool, vkDestroyDescriptorPool>;
 using UniqueDeviceMemory = UniqueDeviceHandle<VkDeviceMemory, vkFreeMemory>;
+using UniqueBuffer = UniqueDeviceHandle<VkBuffer, vkDestroyBuffer>;
 using UniqueImage = UniqueDeviceHandle<VkImage, vkDestroyImage>;
 using UniqueImageView = UniqueDeviceHandle<VkImageView, vkDestroyImageView>;
 using UniqueSampler = UniqueDeviceHandle<VkSampler, vkDestroySampler>;
+using UniqueCommandPool = UniqueDeviceHandle<VkCommandPool, vkDestroyCommandPool>;
+using UniqueFence = UniqueDeviceHandle<VkFence, vkDestroyFence>;
+
+struct BufferResourceConfig {
+    VkDeviceSize size{};
+    VkBufferUsageFlags usage{};
+    VkMemoryPropertyFlags memoryProperties{VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT};
+};
+
+class BufferResource {
+public:
+    BufferResource() = default;
+    ~BufferResource() = default;
+
+    BufferResource(const BufferResource&) = delete;
+    BufferResource& operator=(const BufferResource&) = delete;
+    BufferResource(BufferResource&&) noexcept = default;
+    BufferResource& operator=(BufferResource&&) noexcept = default;
+
+    void create(VkPhysicalDevice physicalDevice, VkDevice device,
+                const BufferResourceConfig& config);
+    void reset();
+    void write(const void* data, VkDeviceSize size, VkDeviceSize offset = 0) const;
+    void read(void* data, VkDeviceSize size, VkDeviceSize offset = 0) const;
+
+    [[nodiscard]] VkBuffer buffer() const { return buffer_.get(); }
+    [[nodiscard]] VkDeviceMemory memory() const { return memory_.get(); }
+    [[nodiscard]] VkDeviceSize size() const { return size_; }
+    [[nodiscard]] VkBufferUsageFlags usage() const { return usage_; }
+    [[nodiscard]] VkMemoryPropertyFlags memoryProperties() const { return memoryProperties_; }
+    [[nodiscard]] explicit operator bool() const { return static_cast<bool>(buffer_); }
+
+private:
+    void validateHostAccess(VkDeviceSize size, VkDeviceSize offset) const;
+
+    VkDevice device_{};
+    UniqueDeviceMemory memory_;
+    UniqueBuffer buffer_;
+    VkDeviceSize size_{};
+    VkBufferUsageFlags usage_{};
+    VkMemoryPropertyFlags memoryProperties_{};
+};
 
 struct ImageResourceConfig {
     VkExtent2D extent{};

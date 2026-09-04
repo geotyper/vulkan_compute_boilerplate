@@ -19,6 +19,7 @@ jobs:
             libglfw3-dev \
             libglm-dev \
             libvulkan-dev \
+            mesa-vulkan-drivers \
             ninja-build
 
       - name: Configure
@@ -28,4 +29,4 @@ jobs:
         run: cmake --build --preset debug
 
       - name: Test
-        run: ctest --preset debug
+        run: ctest --preset debug --output-on-failure

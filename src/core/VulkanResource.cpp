@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <stdexcept>
 #include <string>
@@ -26,6 +27,92 @@ std::uint32_t findMemoryType(const VkPhysicalDevice physicalDevice, const std::u
 }
 
 } // namespace
+
+void BufferResource::create(const VkPhysicalDevice physicalDevice, const VkDevice device,
+                            const BufferResourceConfig& config) {
+    reset();
+    if (device == VK_NULL_HANDLE || physicalDevice == VK_NULL_HANDLE || config.size == 0 ||
+        config.usage == 0) {
+        throw std::invalid_argument("Invalid Vulkan buffer configuration");
+    }
+
+    VkBufferCreateInfo bufferInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    bufferInfo.size = config.size;
+    bufferInfo.usage = config.usage;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VkBuffer buffer{};
+    if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
+        throw std::runtime_error("Unable to create Vulkan buffer");
+    }
+    buffer_.reset(device, buffer);
+
+    VkMemoryRequirements requirements{};
+    vkGetBufferMemoryRequirements(device, buffer_.get(), &requirements);
+    VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    allocation.allocationSize = requirements.size;
+    allocation.memoryTypeIndex =
+        findMemoryType(physicalDevice, requirements.memoryTypeBits, config.memoryProperties);
+    VkDeviceMemory memory{};
+    if (vkAllocateMemory(device, &allocation, nullptr, &memory) != VK_SUCCESS) {
+        throw std::runtime_error("Unable to allocate Vulkan buffer memory");
+    }
+    memory_.reset(device, memory);
+    if (vkBindBufferMemory(device, buffer_.get(), memory_.get(), 0) != VK_SUCCESS) {
+        throw std::runtime_error("Unable to bind Vulkan buffer memory");
+    }
+
+    device_ = device;
+    size_ = config.size;
+    usage_ = config.usage;
+    memoryProperties_ = config.memoryProperties;
+}
+
+void BufferResource::reset() {
+    buffer_.reset();
+    memory_.reset();
+    device_ = VK_NULL_HANDLE;
+    size_ = 0;
+    usage_ = 0;
+    memoryProperties_ = 0;
+}
+
+void BufferResource::validateHostAccess(const VkDeviceSize size, const VkDeviceSize offset) const {
+    constexpr VkMemoryPropertyFlags required =
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    if (!buffer_ || (memoryProperties_ & required) != required) {
+        throw std::logic_error("Buffer is not host-visible coherent memory");
+    }
+    if (size == 0 || offset > size_ || size > size_ - offset) {
+        throw std::out_of_range("Buffer host access is outside the allocation");
+    }
+}
+
+void BufferResource::write(const void* data, const VkDeviceSize size,
+                           const VkDeviceSize offset) const {
+    validateHostAccess(size, offset);
+    if (data == nullptr) {
+        throw std::invalid_argument("Cannot write null data to a Vulkan buffer");
+    }
+    void* mapped{};
+    if (vkMapMemory(device_, memory_.get(), offset, size, 0, &mapped) != VK_SUCCESS) {
+        throw std::runtime_error("Unable to map Vulkan buffer memory");
+    }
+    std::memcpy(mapped, data, static_cast<std::size_t>(size));
+    vkUnmapMemory(device_, memory_.get());
+}
+
+void BufferResource::read(void* data, const VkDeviceSize size, const VkDeviceSize offset) const {
+    validateHostAccess(size, offset);
+    if (data == nullptr) {
+        throw std::invalid_argument("Cannot read Vulkan buffer data into null memory");
+    }
+    void* mapped{};
+    if (vkMapMemory(device_, memory_.get(), offset, size, 0, &mapped) != VK_SUCCESS) {
+        throw std::runtime_error("Unable to map Vulkan buffer memory");
+    }
+    std::memcpy(data, mapped, static_cast<std::size_t>(size));
+    vkUnmapMemory(device_, memory_.get());
+}
 
 void ImageResource::create(const VkPhysicalDevice physicalDevice, const VkDevice device,
                            const ImageResourceConfig& config) {

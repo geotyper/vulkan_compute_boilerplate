@@ -9,7 +9,7 @@ the ImGui interface, and startup presets.
 ## Architecture
 
 ```text
-vulkan_boilerplate (composition root)
+vulkan_compute_boilerplate (composition root)
   -> vkexp_demo
        -> GraphicsModule
        -> ComputeModule
@@ -23,6 +23,11 @@ vulkan_boilerplate (composition root)
        -> VulkanContext
        -> VulkanResource
   -> vkexp_profiling
+  -> vkexp_compute
+       -> ComputePipelineBuilder
+       -> DescriptorAllocator / DescriptorSetWriter
+       -> ImmediateContext
+       -> PingPongBuffer / PingPongImage
 ```
 
 Every runtime module implements the `Module` lifecycle:
@@ -56,9 +61,15 @@ the demo UI displays it without owning the renderer.
       a persistent profiler panel.
 - [x] Add runtime validation output through `VK_EXT_debug_utils`.
 - [x] Add reusable RAII handles and image/shader resources.
+- [x] Add a reusable RAII buffer resource with host-visible access.
+- [x] Add synchronous staging upload and GPU readback.
+- [x] Add a compute pipeline builder and descriptor allocator/writer.
+- [x] Add synchronization2 buffer/image barrier helpers.
+- [x] Add dispatch group calculation and buffer/image ping-pong resources.
+- [x] Add a headless Game of Life smoke test.
 - [x] Add automated unit and CLI smoke tests.
 - [ ] Add shader hot reload.
-- [ ] Add a reusable descriptor allocator.
+- [ ] Add growing frame-aware descriptor pools.
 - [ ] Add off-screen compute-to-graphics image experiments.
 - [ ] Add automated rendering/image-comparison tests.
 
@@ -72,9 +83,9 @@ poll events -> begin module frame -> update modules -> acquire image
             -> compose ImGui over background -> submit -> present
 ```
 
-The first scaffold keeps GPU recording hooks explicit while avoiding a large
-renderer abstraction too early. Experiments can extend a module or introduce a
-new one without changing the core loop.
+The compute layer keeps command recording explicit while removing repetitive
+resource, descriptor, pipeline, dispatch, and ping-pong plumbing. Experiments
+can extend a module or introduce a new one without changing the core loop.
 
 ## Presets
 
@@ -94,13 +105,13 @@ include/vkexp/
   core/       application, context, module, window, Vulkan RAII resources
   demo/       demo state and demo UI
   graphics/   graphics pipeline module
-  compute/    compute pipeline module
+  compute/    reusable compute resources and the demo compute module
   ui/         generic ImGui backend module
   presets/    preset definitions and registry
   profiling/  CPU/GPU scopes, timing history, profiler panel
 src/          implementation files mirroring include/vkexp
 shaders/      GLSL shader experiments
-tests/        CPU-only unit and CLI smoke tests
+tests/        CPU unit, CLI, and headless Vulkan smoke tests
 ```
 
 ## Build strategy

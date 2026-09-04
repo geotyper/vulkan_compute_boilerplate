@@ -1,7 +1,7 @@
 #pragma once
 
+#include "vkexp/compute/ComputeResources.hpp"
 #include "vkexp/core/Module.hpp"
-#include "vkexp/core/VulkanResource.hpp"
 #include "vkexp/profiling/ProfilerTypes.hpp"
 
 namespace vkexp {
@@ -28,10 +28,9 @@ private:
     DemoState& state_;
     ProfileMetricId metric_{invalidProfileMetric};
     UniqueDescriptorSetLayout descriptorSetLayout_;
-    UniqueDescriptorPool descriptorPool_;
+    DescriptorAllocator descriptorAllocator_;
     VkDescriptorSet descriptorSet_{};
-    UniquePipelineLayout pipelineLayout_;
-    UniquePipeline pipeline_;
+    ComputePipeline pipeline_;
     ImageResource output_;
     VkImageLayout outputLayout_{VK_IMAGE_LAYOUT_UNDEFINED};
     std::uint64_t sourceGeneration_{};
